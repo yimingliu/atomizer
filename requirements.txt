@@ -1,0 +1,8 @@
+flask
+requests
+feedparser
+feedgen
+python-dateutil
+parsel
+sentry-sdk[flask]
+wheel

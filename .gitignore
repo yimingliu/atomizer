@@ -1,0 +1,6 @@
+/venv
+/instance
+*/instance
+*.pyc
+config/feeds/*.json
+!config/feeds/test.json
