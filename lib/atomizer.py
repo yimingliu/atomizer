@@ -1,6 +1,5 @@
 import requests
 import parsel
-import json
 import datetime
 import dateutil.parser
 from feedgen.feed import FeedGenerator
@@ -43,9 +42,8 @@ class Page(object):
         self.title = self.uri
 
     @classmethod
-    def load_from_config_file(cls, config_path):
-        config = json.load(open(config_path, 'r'))
-        return cls(config)
+    def load_from_config(cls, config_dict):
+        return cls(config_dict)
 
     def fetch(self):
         headers = {}
@@ -53,25 +51,33 @@ class Page(object):
             headers['User-Agent'] = self.config.get('USER_AGENT')
         response = requests.get(self.uri, headers=headers)
         if response.status_code < 300:
-            selector = parsel.Selector(response.text)
-            entries = selector.xpath(self.config['entries'])
-            self.title = selector.xpath("//head/title/text()").get() or self.title
-            if entries:
-                for entry in entries:
-                    link = entry.xpath(self.config['link']).get()
-                    if not link:
-                        continue
-                    date = entry.xpath(self.config['date']).get() if self.config.get('date') else None
-                    item = Entry(link=link,
-                                 author=entry.xpath(self.config['author']).get() if self.config.get('author') else "",
-                                 author_uri = entry.xpath(self.config['author_uri']).get() if self.config.get('author_uri') else "",
-                                 title=entry.xpath(self.config['title']).get() if self.config.get('title') else link,
-                                 date=dateutil.parser.parse(date) if date else datetime.datetime.utcnow(),
-                                 summary=entry.xpath(self.config['summary']).getall() if self.config.get('summary') else [],
-                                 image=entry.xpath(self.config['image']).getall() if self.config.get('image') else []
-                                 )
-                    self.entries.append(item)
+            self.entries = self.parse_entries_from_html(response.text)
         return self.entries
+
+    def parse_entries_from_html(self, html):
+        parsed_entries = []
+        selector = parsel.Selector(html)
+        entries = selector.xpath(self.config['entries'])
+        self.title = selector.xpath("//head/title/text()").get() or self.title
+        if entries:
+            for entry in entries:
+                link = entry.xpath(self.config['link']).get()
+                if not link:
+                    continue
+                date = entry.xpath(self.config['date']).get() if self.config.get('date') else None
+                item = Entry(link=link,
+                             author=entry.xpath(self.config['author']).get() if self.config.get('author') else "",
+                             author_uri=entry.xpath(self.config['author_uri']).get() if self.config.get(
+                                 'author_uri') else "",
+                             title=entry.xpath(self.config['title']).get() if self.config.get('title') else link,
+                             date=dateutil.parser.parse(date) if date else datetime.datetime.now(datetime.timezone.utc),
+                             summary=entry.xpath(self.config['summary']).getall() if self.config.get('summary') else [],
+                             image=entry.xpath(self.config['image']).getall() if self.config.get('image') else []
+                             )
+                parsed_entries.append(item)
+        if parsed_entries:
+            parsed_entries.sort(key=lambda x: x.date, reverse=True)
+        return parsed_entries
 
     @staticmethod
     def ensure_tz_utc(dt):

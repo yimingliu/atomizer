@@ -1,6 +1,6 @@
 flask
+werkzeug
 requests
-feedparser
 feedgen
 python-dateutil
 parsel
