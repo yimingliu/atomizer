@@ -46,8 +46,8 @@ class Page(object):
         return cls(config_dict)
 
     def fetch(self):
-        headers = {}
-        if self.config.get('USER_AGENT'):
+        headers = self.config.get('headers', {})
+        if self.config.get('USER_AGENT') and 'User-Agent' not in headers:
             headers['User-Agent'] = self.config.get('USER_AGENT')
         response = requests.get(self.uri, headers=headers)
         if response.status_code < 300:
