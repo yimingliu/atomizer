@@ -4,6 +4,7 @@ import datetime
 import dateutil.parser
 from feedgen.feed import FeedGenerator
 import cloudscraper
+from urllib.parse import urlparse
 
 class Entry(object):
 
@@ -12,7 +13,7 @@ class Entry(object):
         self.date = date
         self.title = title
         self.summary = summary
-        self.image = image
+        self.image = [x for x in image if x and x != ""]
         self.author = author
         self.enclosures = enclosures
         self.author_uri = author_uri
@@ -26,11 +27,24 @@ class Entry(object):
 
     @property
     def image_html(self):
-        return "\n".join(["<img src='%s' />" % x for x in self.image])
+        return self.generate_image_html()
+
+    def generate_image_html(self, image_proxies=None):
+        images = self.image
+        if not images:
+            return ""
+        if image_proxies:
+            images = []
+            for image in self.image:
+                parsed = urlparse(image)
+                if parsed.netloc in image_proxies:
+                    images.append(image_proxies[parsed.netloc] + f"?uri={image}")
+        image_tags = "\n".join(["<img src='%s' />" % x for x in images])
+        return f"<div class='post_image'>{image_tags}</div>"
 
     @property
     def content_html(self):
-        return "<div class='post_image'>%s</div><div class='post_text'>%s</div>" % (self.image_html, self.summary_html)
+        return f"<div class='post_text'>{self.summary_html}</div>"
 
 
 class Page(object):
@@ -52,7 +66,7 @@ class Page(object):
         if self.config.get("handling") == "cloudflare":
             response = self.get_cloudflare(self.uri, headers=headers)
         else:
-            response = requests.get(self.uri, headers=headers)
+            response = requests.get(self.uri, headers=headers, timeout=120)
         if response.status_code < 300:
             self.entries = self.parse_entries_from_html(response.text)
         return self.entries
@@ -108,7 +122,7 @@ class Page(object):
         else:
             return dt.replace(tzinfo=datetime.timezone.utc)
 
-    def to_atom(self, deployment_uri, use_summary=False):
+    def to_atom(self, deployment_uri, use_summary=False, image_proxy_uri=None):
         fg = FeedGenerator()
         fg.load_extension('podcast')
         fg.id(deployment_uri)
@@ -120,6 +134,7 @@ class Page(object):
         fg.description(self.title)
 
         for entry in self.entries:
+
             feed_item = fg.add_entry(order='append')
             feed_item.id(entry.link)
             feed_item.title(entry.title)
@@ -137,7 +152,11 @@ class Page(object):
                                             type=enclosure.get("type", ""))
             if use_summary and entry.summary:
                 feed_item.summary(entry.summary_html)
-            feed_item.content(content=entry.content_html, type="html")
+            image_proxies = None
+            if self.config.get('image_proxy_domains') and image_proxy_uri:
+                image_proxies = {x: image_proxy_uri for x in self.config['image_proxy_domains']}
+            content_html = entry.generate_image_html(image_proxies=image_proxies) + "\n" + entry.content_html
+            feed_item.content(content=content_html, type="html")
 
         return fg.atom_str(pretty=True)
 
