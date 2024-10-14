@@ -1,5 +1,5 @@
 from flask import Flask, request, abort, send_file, url_for
-import os.path
+import os, os.path
 import io
 import re
 import json
@@ -31,6 +31,19 @@ if 'SENTRY_DSN' in app.config:
         integrations=[FlaskIntegration()]
     )
 
+def populate_whitelist():
+    # for each *.json file in config_path, load the feed and add the image_proxy_domains to the whitelist
+    whitelist = set()
+    for file in os.listdir(APP_CONFIG_FEEDS):
+        if file.endswith(".json"):
+            full_path = os.path.join(APP_CONFIG_FEEDS, file)
+            feed = json.load(open(full_path, 'r'))
+            if feed.get("image_proxy_domains"):
+                domains = set(feed.get("image_proxy_domains"))
+                whitelist = whitelist.union(domains)
+    return whitelist
+
+app.config['IMAGEPROXY_WHITELIST'] = populate_whitelist()
 
 def load_from_config_file(config_path):
     config = json.load(open(config_path, 'r'))
@@ -38,7 +51,6 @@ def load_from_config_file(config_path):
     # if 'twitter' in config.get('feed_type'):
     #     feed = TWPage
     return feed.load_from_config(config)
-
 
 def make_feed(feed_id, request):
     feed_id = secure_filename(feed_id)
@@ -68,7 +80,6 @@ def get_atom_feed(feed_id):
     return make_feed(feed_id, request)
 
 def is_allowed_proxy(domain):
-
     # Ensure domain is in the whitelist
     if domain not in app.config['IMAGEPROXY_WHITELIST']:
         print(f"{domain} Not on whitelist")
@@ -80,13 +91,11 @@ def is_allowed_proxy(domain):
         # Prevent private IP ranges (IPv4)
         if ip_address.startswith(("10.", "192.168.")) or ip_address == "127.0.0.1":
             print(f"banned IP {domain} {ip_address}")
-
             return False
         # You might also want to check for IPv6 private ranges here
     except socket.gaierror:
         # If domain resolution fails, block the request
         print("can't resolve")
-
         return False
 
     return True
@@ -98,7 +107,7 @@ def proxy_image():
         abort(400, description="URL parameter is required")
     if not re.match(r'^https?://', image_url):
         abort(400, description="Invalid URL format")
-        
+
     # Parse the domain from the image URL
     parsed_url = urlparse(image_url)
     domain = parsed_url.netloc
@@ -109,7 +118,7 @@ def proxy_image():
 
     # Fetch the image with the referer header from the url
     base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
-    headers = {'Referer': base_url}
+    headers = {'Referer': base_url, "User-Agent": request.headers.get("User-Agent")}
     scraper = cloudscraper.create_scraper()
     response = scraper.get(image_url, headers=headers)
 
