@@ -39,6 +39,8 @@ class Entry(object):
                 parsed = urlparse(image)
                 if parsed.netloc in image_proxies:
                     images.append(image_proxies[parsed.netloc] + f"?uri={image}")
+                else:
+                    images.append(image)
         image_tags = "\n".join(["<img src='%s' />" % x for x in images])
         return f"<div class='post_image'>{image_tags}</div>"
 
