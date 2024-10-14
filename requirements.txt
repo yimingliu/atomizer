@@ -5,4 +5,4 @@ feedgen
 python-dateutil
 parsel
 sentry-sdk[flask]
-wheel
+cloudscraper

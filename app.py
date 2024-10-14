@@ -36,12 +36,14 @@ def make_feed(feed_id, request):
     feed_config_filepath = os.path.join(APP_CONFIG_FEEDS, feed_id+".json")
     if not os.path.isfile(feed_config_filepath):
         # print(feed_config_filepath)
-        abort(404)
+        abort(404, message="Feed config not found")
 
     feed = load_from_config_file(feed_config_filepath)
     if not feed:
         abort(400)
     feed.fetch()
+    if not feed.entries:
+        abort(404, message="No entries found in specified feed")
     # feed_uri = request.url_root
     return feed.to_atom(request.url)
 

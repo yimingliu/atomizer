@@ -3,7 +3,7 @@ import parsel
 import datetime
 import dateutil.parser
 from feedgen.feed import FeedGenerator
-
+import cloudscraper
 
 class Entry(object):
 
@@ -49,10 +49,23 @@ class Page(object):
         headers = self.config.get('headers', {})
         if self.config.get('USER_AGENT') and 'User-Agent' not in headers:
             headers['User-Agent'] = self.config.get('USER_AGENT')
-        response = requests.get(self.uri, headers=headers)
+        if self.config.get("handling") == "cloudflare":
+            response = self.get_cloudflare(self.uri, headers=headers)
+        else:
+            response = requests.get(self.uri, headers=headers)
         if response.status_code < 300:
             self.entries = self.parse_entries_from_html(response.text)
         return self.entries
+
+    @staticmethod
+    def get_cloudflare(uri, **kwargs):
+        scraper = cloudscraper.create_scraper()
+        try:
+            response = scraper.get(uri, **kwargs)
+        except Exception as e:
+            print("Error fetching %s: %s" % (uri, e))
+            return None
+        return response
 
     def parse_entries_from_html(self, html):
         parsed_entries = []
