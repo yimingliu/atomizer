@@ -7,7 +7,9 @@ import cloudscraper
 from urllib.parse import urlparse
 
 class Entry(object):
-
+    """
+    Represents an individual entry in a feed
+    """
     def __init__(self, link, title, date, author="", author_uri="", summary=None, image=None, enclosures=None):
         self.link = link
         self.date = date
@@ -30,10 +32,18 @@ class Entry(object):
         return self.generate_image_html()
 
     def generate_image_html(self, image_proxies=None):
+        """
+        Given a list of image URLs, return a string of HTML img tags for inclusion in a content block
+        Optionally, pass a dict of domain: proxy_uri to proxy the images so they can be displayed in the feed.
+        This is largely to avoid hotlinking issues with images.
+        :param image_proxies: dict of domain: proxy_uri
+        :return: str
+        """
         images = self.image
         if not images:
             return ""
         if image_proxies:
+            # if we have image proxies specified, check the domain of each image
             images = []
             for image in self.image:
                 parsed = urlparse(image)
@@ -57,21 +67,41 @@ class Page(object):
         self.uri = self.config['uri']
         self.title = self.uri
 
+    @property
+    def canonical_uri(self):
+        return self.uri if not self.is_list_like(self.uri) else self.uri[0]
+
     @classmethod
     def load_from_config(cls, config_dict):
         return cls(config_dict)
 
+    @staticmethod
+    def is_list_like(obj):
+        return isinstance(obj, list) or isinstance(obj, tuple)
+
     def fetch(self):
+        entries = []
+        multi_uris = self.is_list_like(self.uri)
+        uris = self.uri if multi_uris else [self.uri]
+        for uri in uris:
+            entries.extend(self.fetch_uri(uri))
+        if entries and multi_uris:
+            entries.sort(key=lambda x: x.date, reverse=True)
+        self.entries = entries
+        return self.entries
+
+    def fetch_uri(self, uri):
         headers = self.config.get('headers', {})
+        entries = []
         if self.config.get('USER_AGENT') and 'User-Agent' not in headers:
             headers['User-Agent'] = self.config.get('USER_AGENT')
         if self.config.get("handling") == "cloudflare":
-            response = self.get_cloudflare(self.uri, headers=headers)
+            response = self.get_cloudflare(uri, headers=headers)
         else:
-            response = requests.get(self.uri, headers=headers, timeout=120)
+            response = requests.get(uri, headers=headers, timeout=120)
         if response.status_code < 300:
-            self.entries = self.parse_entries_from_html(response.text)
-        return self.entries
+            entries = self.parse_entries_from_html(response.text)
+        return entries
 
     @staticmethod
     def get_cloudflare(uri, **kwargs):
@@ -131,7 +161,7 @@ class Page(object):
         fg.title(self.title)
         fg.author({"name": "Atomizer/1.0"})
         fg.generator("Atomizer")
-        fg.link(href=self.uri, rel='alternate', type="text/html")
+        fg.link(href=self.canonical_uri, rel='alternate', type="text/html")
         fg.link(href=deployment_uri, rel='self')
         fg.description(self.title)
 
