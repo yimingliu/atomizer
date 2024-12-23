@@ -3,7 +3,7 @@ import os, os.path
 import io
 import re
 import json
-from lib import atomizer
+from lib import html_atomizer, json_atomizer
 from urllib.parse import urlparse
 import cloudscraper
 import socket
@@ -47,7 +47,9 @@ app.config['IMAGEPROXY_WHITELIST'] = populate_whitelist()
 
 def load_from_config_file(config_path):
     config = json.load(open(config_path, 'r'))
-    feed = atomizer.Page
+    feed = html_atomizer.HTMLPage
+    if 'json' in config.get('feed_type'):
+        feed = json_atomizer.JSONPage
     # if 'twitter' in config.get('feed_type'):
     #     feed = TWPage
     return feed.load_from_config(config)

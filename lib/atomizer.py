@@ -1,10 +1,10 @@
 import requests
-import parsel
 import datetime
-import dateutil.parser
 from feedgen.feed import FeedGenerator
 import cloudscraper
 from urllib.parse import urlparse
+
+MAX_PAGE_FETCHES = 100
 
 class Entry(object):
     """
@@ -15,9 +15,9 @@ class Entry(object):
         self.date = date
         self.title = title
         self.summary = summary
-        self.image = [x for x in image if x and x != ""]
+        self.image = [x for x in image if x and x != ""] if image else []
         self.author = author
-        self.enclosures = enclosures
+        self.enclosures = enclosures or []
         self.author_uri = author_uri
 
     def __repr__(self):
@@ -66,10 +66,21 @@ class Page(object):
         self.config = config
         self.uri = self.config['uri']
         self.title = self.uri
+        self.image = None
+        self.itunes_category = None
+        self.itunes_explicit = None
 
     @property
     def canonical_uri(self):
         return self.uri if not self.is_list_like(self.uri) else self.uri[0]
+
+    @property
+    def is_podcast_output(self):
+        return self.config.get("output_type") == "podcast"
+
+    @property
+    def is_rss_output(self):
+        return self.config.get("output_type") == "rss"
 
     @classmethod
     def load_from_config(cls, config_dict):
@@ -92,16 +103,34 @@ class Page(object):
 
     def fetch_uri(self, uri):
         headers = self.config.get('headers', {})
+        params = self.config.get('params', {})
+        offset_param = self.config.get("offset_param")
+        per_page = int(self.config.get("per_page")) if self.config.get("per_page") else None
         entries = []
+        max_loop = MAX_PAGE_FETCHES if offset_param and per_page else 1
         if self.config.get('USER_AGENT') and 'User-Agent' not in headers:
             headers['User-Agent'] = self.config.get('USER_AGENT')
-        if self.config.get("handling") == "cloudflare":
-            response = self.get_cloudflare(uri, headers=headers)
-        else:
-            response = requests.get(uri, headers=headers, timeout=120)
-        if response.status_code < 300:
-            entries = self.parse_entries_from_html(response.text)
+        for i in range(max_loop):
+            # print(f"Fetching {uri} page {i}")
+            if offset_param and per_page:
+                params[offset_param] = i * per_page
+            response = self.fetch_page(uri, headers, params)
+            if response.status_code < 300:
+                page_entries = self.parse_entries_from_response(response)
+                if not page_entries:
+                    break
+                entries.extend(page_entries)
         return entries
+
+    def parse_entries_from_response(self, response):
+        raise NotImplementedError("Subclasses must implement this method")
+
+    def fetch_page(self, uri, headers, params):
+        if self.config.get("handling") == "cloudflare":
+            response = self.get_cloudflare(uri, headers=headers, params=params)
+        else:
+            response = requests.get(uri, headers=headers, params=params, timeout=120)
+        return response
 
     @staticmethod
     def get_cloudflare(uri, **kwargs):
@@ -112,31 +141,6 @@ class Page(object):
             print("Error fetching %s: %s" % (uri, e))
             return None
         return response
-
-    def parse_entries_from_html(self, html):
-        parsed_entries = []
-        selector = parsel.Selector(html)
-        entries = selector.xpath(self.config['entries'])
-        self.title = selector.xpath("//head/title/text()").get() or self.title
-        if entries:
-            for entry in entries:
-                link = entry.xpath(self.config['link']).get()
-                if not link:
-                    continue
-                date = entry.xpath(self.config['date']).get() if self.config.get('date') else None
-                item = Entry(link=link,
-                             author=entry.xpath(self.config['author']).get() if self.config.get('author') else "",
-                             author_uri=entry.xpath(self.config['author_uri']).get() if self.config.get(
-                                 'author_uri') else "",
-                             title=entry.xpath(self.config['title']).get() if self.config.get('title') else link,
-                             date=dateutil.parser.parse(date) if date else datetime.datetime.now(datetime.timezone.utc),
-                             summary=entry.xpath(self.config['summary']).getall() if self.config.get('summary') else [],
-                             image=entry.xpath(self.config['image']).getall() if self.config.get('image') else []
-                             )
-                parsed_entries.append(item)
-        if parsed_entries:
-            parsed_entries.sort(key=lambda x: x.date, reverse=True)
-        return parsed_entries
 
     @staticmethod
     def ensure_tz_utc(dt):
@@ -156,7 +160,6 @@ class Page(object):
 
     def to_atom(self, deployment_uri, use_summary=False, image_proxy_uri=None):
         fg = FeedGenerator()
-        fg.load_extension('podcast')
         fg.id(deployment_uri)
         fg.title(self.title)
         fg.author({"name": "Atomizer/1.0"})
@@ -164,9 +167,17 @@ class Page(object):
         fg.link(href=self.canonical_uri, rel='alternate', type="text/html")
         fg.link(href=deployment_uri, rel='self')
         fg.description(self.title)
-
+        if self.image:
+            fg.image(self.image, title=self.title, link=self.canonical_uri)
+        if self.is_podcast_output:
+            fg.load_extension('podcast')
+            if self.itunes_category:
+                fg.podcast.itunes_category(self.itunes_category)
+            if self.itunes_explicit:
+                fg.podcast.itunes_explicit(self.itunes_explicit)
+            if self.image:
+                fg.podcast.itunes_image(self.image)
         for entry in self.entries:
-
             feed_item = fg.add_entry(order='append')
             feed_item.id(entry.link)
             feed_item.title(entry.title)
@@ -189,7 +200,8 @@ class Page(object):
                 image_proxies = {x: image_proxy_uri for x in self.config['image_proxy_domains']}
             content_html = entry.generate_image_html(image_proxies=image_proxies) + "\n" + entry.content_html
             feed_item.content(content=content_html, type="html")
-
+        if self.is_rss_output or self.is_podcast_output:
+            return fg.rss_str(pretty=True)
         return fg.atom_str(pretty=True)
 
 
