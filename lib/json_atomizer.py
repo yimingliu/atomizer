@@ -12,7 +12,7 @@ class JSONPage(Page):
         self.title = self.get_json_value(selector, 'feed_title', default="")
         self.image = self.get_json_value(selector, 'feed_image')
         self.itunes_category = self.get_json_value(selector, 'itunes_category')
-        self.itunes_explicit = self.get_json_value(selector, 'itunes_explicit')
+        self.itunes_explicit = self.get_json_value(selector, 'itunes_explicit', default=False)
         if entries:
             for entry in entries:
                 link = self.get_json_value(entry, 'link')
@@ -20,16 +20,13 @@ class JSONPage(Page):
                     continue
                 entry_date = self.get_json_value(entry, 'date')
                 default_date = datetime.datetime.combine(datetime.datetime.now(),
-                                                datetime.time(0, tzinfo=dateutil.tz.gettz("UTC")))
-
-                item = Entry(link=link,
+                                                datetime.time(0, tzinfo=dateutil.tz.tzutc()))
+                item = Entry(link=link, title=self.get_json_value(entry, 'title', default=link),
+                             date=dateutil.parser.parse(entry_date,
+                                                        default=default_date) if entry_date else default_date,
                              author=self.get_json_value(entry, 'author', default=""),
                              author_uri=self.get_json_value(entry, 'author_uri', default=""),
-                             title=self.get_json_value(entry, 'title', default=link),
-                             date=dateutil.parser.parse(entry_date, default=default_date) if entry_date else default_date,
-                             summary=[self.get_json_value(entry, 'summary', default="")],
-                             # image=entry.xpath(self.config['image']).getall() if self.config.get('image') else []
-                             )
+                             summary=[self.get_json_value(entry, 'summary', default="")])
                 enclosure_path = self.get_json_value(entry, 'enclosures')
                 if enclosure_path:
                     enclosure = {

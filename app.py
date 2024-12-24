@@ -71,7 +71,7 @@ def make_feed(feed_id, request):
     if not feed.entries:
         abort(404, message="No entries found in specified feed")
     # feed_uri = request.url_root
-    return feed.to_atom(request.url, image_proxy_uri=url_for('proxy_image', _external=True))
+    return feed.to_feed(request.url, image_proxy_uri=url_for('proxy_image', _external=True))
 
 @app.route('/')
 def hello_world():

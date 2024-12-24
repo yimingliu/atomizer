@@ -24,14 +24,13 @@ class HTMLPage(Page):
                     continue
                 date = entry.xpath(self.config['date']).get() if self.config.get('date') else None
                 item = Entry(link=link,
+                             title=entry.xpath(self.config['title']).get() if self.config.get('title') else link,
+                             date=dateutil.parser.parse(date) if date else datetime.datetime.now(datetime.timezone.utc),
                              author=entry.xpath(self.config['author']).get() if self.config.get('author') else "",
                              author_uri=entry.xpath(self.config['author_uri']).get() if self.config.get(
                                  'author_uri') else "",
-                             title=entry.xpath(self.config['title']).get() if self.config.get('title') else link,
-                             date=dateutil.parser.parse(date) if date else datetime.datetime.now(datetime.timezone.utc),
                              summary=entry.xpath(self.config['summary']).getall() if self.config.get('summary') else [],
-                             image=entry.xpath(self.config['image']).getall() if self.config.get('image') else []
-                             )
+                             image=entry.xpath(self.config['image']).getall() if self.config.get('image') else [])
                 parsed_entries.append(item)
         if parsed_entries:
             parsed_entries.sort(key=lambda x: x.date, reverse=True)

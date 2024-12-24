@@ -10,7 +10,7 @@ class Entry(object):
     """
     Represents an individual entry in a feed
     """
-    def __init__(self, link, title, date, author="", author_uri="", summary=None, image=None, enclosures=None):
+    def __init__(self, link, title, date, author="", author_uri="", author_email="", summary=None, image=None, enclosures=None):
         self.link = link
         self.date = date
         self.title = title
@@ -19,6 +19,7 @@ class Entry(object):
         self.author = author
         self.enclosures = enclosures or []
         self.author_uri = author_uri
+        self.author_email = author_email
 
     def __repr__(self):
         return self.__dict__.__repr__()
@@ -69,6 +70,7 @@ class Page(object):
         self.image = None
         self.itunes_category = None
         self.itunes_explicit = None
+        self.feed_author = self.config.get("author_default")
 
     @property
     def canonical_uri(self):
@@ -158,7 +160,7 @@ class Page(object):
         else:
             return dt.replace(tzinfo=datetime.timezone.utc)
 
-    def to_atom(self, deployment_uri, use_summary=False, image_proxy_uri=None):
+    def to_feed(self, deployment_uri, use_summary=False, image_proxy_uri=None):
         fg = FeedGenerator()
         fg.id(deployment_uri)
         fg.title(self.title)
@@ -173,16 +175,20 @@ class Page(object):
             fg.load_extension('podcast')
             if self.itunes_category:
                 fg.podcast.itunes_category(self.itunes_category)
-            if self.itunes_explicit:
+            if self.itunes_explicit is not None:
                 fg.podcast.itunes_explicit(self.itunes_explicit)
             if self.image:
                 fg.podcast.itunes_image(self.image)
+            if self.feed_author:
+                fg.podcast.itunes_author(self.feed_author)
         for entry in self.entries:
             feed_item = fg.add_entry(order='append')
             feed_item.id(entry.link)
             feed_item.title(entry.title)
             feed_item.updated(self.ensure_tz_utc(entry.date))
             author = {"name": entry.author}
+            if entry.author_email:
+                author['email'] = entry.author_email
             if entry.author_uri:
                 author['uri'] = entry.author_uri
             feed_item.author(author)
@@ -190,9 +196,17 @@ class Page(object):
             feed_item.link(link={"href": entry.link, "rel": "alternate", "type": "text/html"})
             if entry.enclosures:
                 for enclosure in entry.enclosures:
-                    if enclosure.get("href"):
-                        feed_item.enclosure(url=enclosure.get("href"), length=enclosure.get("length", 0),
-                                            type=enclosure.get("type", ""))
+                    if not enclosure.get("href"):
+                        continue
+                    enclosure_url = enclosure['href']
+                    enclosure_type = enclosure.get("type", "")
+                    enclosure_length = enclosure.get("length", 0)
+                    if self.config.get("use_enclosure_length") and not enclosure_length:
+                        cached_enclosure = self.get_cached_enclosure(entry.link) or {}
+                        if cached_enclosure.get('url') != enclosure_url:
+                            print(f"WARNING: Cached enclosure URL {cached_enclosure.get('url')} does not match current {enclosure_url}. Missing cache?")
+                        enclosure_length = cached_enclosure.get("length") or self.get_file_length(enclosure['href'])
+                    feed_item.enclosure(url=enclosure_url, length=enclosure_length, type=enclosure_type)
             if use_summary and entry.summary:
                 feed_item.summary(entry.summary_html)
             image_proxies = None
@@ -204,7 +218,18 @@ class Page(object):
             return fg.rss_str(pretty=True)
         return fg.atom_str(pretty=True)
 
+    @staticmethod
+    def get_file_length(url):
+        try:
+            response = requests.head(url, timeout=30, allow_redirects=True)
+            if response.status_code < 300:
+                return int(response.headers.get('Content-Length', 0))
+        except Exception as e:
+            print(f"Error getting file length for {url}: {e}")
+        return 0
 
+    def get_cached_enclosure(self, url):
+        return self.config.get("cache", {}).get("enclosures", {}).get(url)
 
 
 
