@@ -7,8 +7,7 @@ from lib import html_atomizer, json_atomizer
 from urllib.parse import urlparse
 import cloudscraper
 import socket
-
-# from lib.tw import TWPage
+import logging
 
 app = Flask(__name__)
 # app.config.from_object('config')
@@ -19,6 +18,7 @@ APP_CONFIG_FEEDS = os.path.join(APP_ROOT, 'config', 'feeds')
 
 app.config['IMAGEPROXY_WHITELIST'] = set()
 MAX_PROXY_IMAGE_SIZE = 32 * 1024 * 1024
+app.logger.setLevel(logging.INFO)
 
 from werkzeug.utils import secure_filename
 
@@ -58,7 +58,7 @@ def make_feed(feed_id, request):
     feed_id = secure_filename(feed_id)
     feed_config_filepath = os.path.join(APP_CONFIG_FEEDS, feed_id+".json")
     if not os.path.isfile(feed_config_filepath):
-        # print(feed_config_filepath)
+        app.logger.error(f"Feed config not found: {feed_config_filepath}")
         abort(404, message="Feed config not found")
 
     feed = load_from_config_file(feed_config_filepath)
@@ -66,11 +66,12 @@ def make_feed(feed_id, request):
         domains = set(feed.config.get("image_proxy_domains"))
         app.config['IMAGEPROXY_WHITELIST'] = app.config['IMAGEPROXY_WHITELIST'].union(domains)
     if not feed:
+        app.logger.error(f"Invalid feed from config file: {feed_config_filepath}")
         abort(400)
     feed.fetch()
     if not feed.entries:
+        app.logger.error(f"No entries found in specified feed")
         abort(404, message="No entries found in specified feed")
-    # feed_uri = request.url_root
     return feed.to_feed(request.url, image_proxy_uri=url_for('proxy_image', _external=True))
 
 @app.route('/')
@@ -84,7 +85,7 @@ def get_atom_feed(feed_id):
 def is_allowed_proxy(domain):
     # Ensure domain is in the whitelist
     if domain not in app.config['IMAGEPROXY_WHITELIST']:
-        print(f"{domain} Not on whitelist")
+        app.logger.error(f"{domain} Not on whitelist")
         return False
 
     # Resolve the domain to an IP address and check it's not private
@@ -92,12 +93,12 @@ def is_allowed_proxy(domain):
         ip_address = socket.gethostbyname(domain)
         # Prevent private IP ranges (IPv4)
         if ip_address.startswith(("10.", "192.168.")) or ip_address == "127.0.0.1":
-            print(f"banned IP {domain} {ip_address}")
+            app.logger.error(f"banned IP {domain} {ip_address}")
             return False
         # You might also want to check for IPv6 private ranges here
     except socket.gaierror:
         # If domain resolution fails, block the request
-        print("can't resolve")
+        app.logger.error(f"Failed to resolve domain {domain}")
         return False
 
     return True
@@ -106,8 +107,10 @@ def is_allowed_proxy(domain):
 def proxy_image():
     image_url = request.args.get('uri')
     if not image_url:
+        app.logger.error(f"No URL parameter given {request.url}")
         abort(400, description="URL parameter is required")
     if not re.match(r'^https?://', image_url):
+        app.logger.error(f"Invalid URL format: {image_url}")
         abort(400, description="Invalid URL format")
 
     # Parse the domain from the image URL
@@ -116,6 +119,7 @@ def proxy_image():
 
     # Check if the domain is in the whitelist
     if not is_allowed_proxy(domain):
+        app.logger.error(f"Domain not allowed: {domain}")
         abort(403, description="Domain not allowed")
 
     # Fetch the image with the referer header from the url
@@ -126,9 +130,11 @@ def proxy_image():
 
     content_length = response.headers.get('Content-Length')
     if content_length and int(content_length) > MAX_PROXY_IMAGE_SIZE:
+        app.logger.error(f"Image size exceeds maximum allowed limit: {content_length} / {MAX_PROXY_IMAGE_SIZE}")
         abort(413, description="Image size exceeds the maximum allowed limit")
 
     if response.status_code != 200:
+        app.logger.error(f"Failed to fetch image due to remote-side error: {response.status_code}")
         abort(response.status_code, description=f"Failed to fetch image")
 
     # Return the image content
